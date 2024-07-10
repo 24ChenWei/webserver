@@ -3,6 +3,7 @@
 #include <sys/epoll.h>
 #include <stdio.h>
 #include <fcntl.h>
+#include <errno.h>
 
 int initListenFd(unsigned short port)
 {
@@ -74,12 +75,13 @@ int epollRun(int lfd)
             if (fd == lfd)
             {
                 //建立新连接 accept
-                acceptClient(lfd,epfd);
+                acceptClient(lfd, epfd);
                 
             }
             else
             {
                 //主要是接收对端的数据
+                recvHttpRequest(fd, epfd);
             }
         }
     }
@@ -111,4 +113,35 @@ int acceptClient(int lfd, int epfd)
         return -1;
     }
 
+}
+
+int recvHttpRequest(int cfd, int epfd)
+{
+    int len = 0, totle = 0;;
+    char tmp[1024] = { 0 };
+    char buf[4096] = {0};
+    while(len = recv(cfd, tmp, sizeof(tmp), 0) > 0)
+    {
+        if(totle + len < sizeof buf)
+        {
+            memcpy(buf + totle, tmp, len);
+            totle += len;            
+        }
+    }
+    //判断数据是否被接收完毕
+    if(len == -1 && errno == EAGAIN)
+    {
+        //解析请求行
+
+    }
+    else if (len == 0)
+    {
+        //客户端断开了连接
+        epoll_ctl(epfd, EPOLL_CTL_DEL, cfd, NULL);
+        close(cfd);
+    }
+    else
+    {
+        perror("recv");
+    }
 }
