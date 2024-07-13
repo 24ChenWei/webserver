@@ -79,6 +79,7 @@ int epollRun(int lfd)
         int num = epoll_wait(epfd, evs, size, -1);
         for(int i = 0; i < num; i++)
         {
+            
             int fd = evs[i].data.fd;
             if (fd == lfd)
             {
@@ -113,7 +114,7 @@ int acceptClient(int lfd, int epfd)
     //3.cfd添加到epoll中
     struct epoll_event ev;  
     ev.data.fd = cfd;
-    ev.events = EPOLLOUT | EPOLLET;
+    ev.events = EPOLLIN | EPOLLET;
     int ret = epoll_ctl(epfd, EPOLL_CTL_ADD, cfd, &ev);
     if(ret == -1)
     {
@@ -125,18 +126,23 @@ int acceptClient(int lfd, int epfd)
 
 int recvHttpRequest(int cfd, int epfd)
 {
-    int len = 0, totle = 0;;
+    printf("开始接收数据...\n");
+    int len = 0, totle = 0;
     char tmp[1024] = { 0 };
     char buf[4096] = { 0 };
-    while(len = recv(cfd, tmp, sizeof(tmp), 0) > 0)
+    while((len = recv(cfd, tmp, sizeof tmp, 0)) > 0)
     {
+        //printf("tmp: %s\n", tmp);
         if(totle + len < sizeof buf)
         {
-            memcpy(buf + totle, tmp, len);
-            totle += len;            
+            memcpy(buf + totle, tmp, len);       
         }
+        totle += len;
+        
     }
     //判断数据是否被接收完毕
+    //printf("buf: %s\n", buf);
+    //printf("len: %d\n", len);
     if(len == -1 && errno == EAGAIN)
     {
         //解析请求行
@@ -165,6 +171,7 @@ int parseRequestLine(const char *line, int cfd)
     char method[12];
     char path[1024];
     sscanf(line, "%[^ ] %[^ ]", method, path);
+    printf("method: %s, path: %s\n", method, path);
     if(strcasecmp(method, "get") != 0)  //不区分大小写
     {
         return -1;
@@ -193,7 +200,7 @@ int parseRequestLine(const char *line, int cfd)
     if(S_ISDIR(st.st_mode))     //如果是目录返回1
     {
         //把这个目录中的内容发送给客户端
-        sendHeadMsg(cfd, 200, "OK", getFileType("html"), -1);
+        sendHeadMsg(cfd, 200, "OK", getFileType(".html"), -1);
         sendDir(file,cfd);
     }
     else
@@ -284,7 +291,7 @@ int sendDir(const char *dirName, int cfd)
         {
             //a标签<a href="">name</a>      实现跳转
             sprintf(buf + strlen(buf), "<tr><td><a href=\"%s/\">%s</a></td><td>%ld</td></tr>",
-             name, name, st.st_size);
+            name, name, st.st_size);
         }
         else
         {
@@ -292,11 +299,13 @@ int sendDir(const char *dirName, int cfd)
              name, name, st.st_size);
         }
         send(cfd,buf,strlen(buf), 0);
+        //printf("dir buf: %s\n",buf);
         memset(buf,0, sizeof(buf));
         free(namelist[i]);
     }
     sprintf(buf,"</table></body></html>");
     send(cfd,buf,strlen(buf),0);
+    //printf("dir buf: %s\n",buf);
     free(namelist);
     return 0;
 }
@@ -309,12 +318,14 @@ int sendFile(const char* fileName, int cfd)
 #if 0
     while (1)
     {
-        char buf[1024];
+        char buf[1024] = { 0 };
         int len = read(fd, buf, sizeof buf);
-        if(len >0)
+        printf("len: %d\n", len);
+        if(len > 0)
         {
+            //printf("file buf: %s", buf);
             send(cfd,buf,len,0);
-            usleep(10);  //这非常重要
+            usleep(100);  //这非常重要
         }
         else if(len == 0)
         {
@@ -326,9 +337,22 @@ int sendFile(const char* fileName, int cfd)
         }
     }
 #else
+    off_t offset = 0;
     int size = lseek(fd, 0, SEEK_END);
-    sendfile(cfd, fd, NULL, size);
+    lseek(fd, 0, SEEK_SET);
+    while(offset < size)
+    {
+        int ret = sendfile(cfd, fd, &offset, size);     //offset由函数自动管理，发送数据后，更新该偏移量
+        printf("ret value: %d\n", ret);
+        if (ret == -1 && errno == EAGAIN)
+        {
+            printf("没数据...\n");
+            //usleep(10);   //sendfile设置为非阻塞模式时，如果没数据也会一直进行读，但是这时错误码是EAGAIN
+        }
+    }
+    
 #endif
+    close(fd);
     return 0;
 }
 
@@ -340,7 +364,7 @@ int sendHeadMsg(int cfd, int status, const char *descr, const char *type, int le
     //响应头
     sprintf(buf + strlen(buf), "content-type: %s\r\n", type);
     sprintf(buf + strlen(buf), "content-length: %d\r\n\r\n", length);
-
+    //printf("HeadMsg buf: %s", buf);
     send(cfd,buf, strlen(buf), 0);
     return 0;
 }
