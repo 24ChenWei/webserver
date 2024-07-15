@@ -13,6 +13,14 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <pthread.h>
+
+struct FdInfo
+{
+    int fd;
+    int epfd;
+    pthread_t tid;
+};
 
 int initListenFd(unsigned short port)
 {
@@ -80,31 +88,36 @@ int epollRun(int lfd)
         int num = epoll_wait(epfd, evs, size, -1);
         for(int i = 0; i < num; i++)
         {
-            
+            struct FdInfo* info = (struct FdInfo*)malloc(sizeof(struct FdInfo));
             int fd = evs[i].data.fd;
+            info->epfd = epfd;
+            info->fd = fd;
             if (fd == lfd)
             {
                 //建立新连接 accept
-                acceptClient(lfd, epfd);
-                
+                //acceptClient(lfd, epfd);
+                pthread_create(&info->tid, NULL, acceptClient, info);
             }
             else
             {
                 //主要是接收对端的数据
-                recvHttpRequest(fd, epfd);
+                //recvHttpRequest(fd, epfd);
+                pthread_create(&info->tid, NULL, recvHttpRequest, info);
             }
         }
     }
 }
 
-int acceptClient(int lfd, int epfd)
+//int acceptClient(int lfd, int epfd)
+void* acceptClient(void* arg)
 {
+    struct FdInfo* info = (struct FdInfo*)arg;
     //1.建立连接
-    int cfd = accept(lfd, NULL, NULL);
+    int cfd = accept(info->fd, NULL, NULL);
     if(cfd == -1)
     {
         perror("accept");
-        return -1;
+        return NULL;
     }
 
     //2.设置非阻塞
@@ -116,22 +129,25 @@ int acceptClient(int lfd, int epfd)
     struct epoll_event ev;  
     ev.data.fd = cfd;
     ev.events = EPOLLIN | EPOLLET;
-    int ret = epoll_ctl(epfd, EPOLL_CTL_ADD, cfd, &ev);
+    int ret = epoll_ctl(info->epfd, EPOLL_CTL_ADD, cfd, &ev);
     if(ret == -1)
     {
         perror("epoll_ctl");
-        return -1;
+        return NULL;
     }
-
+    printf("recvMsg threadId: %ld\n", info->tid);
+    free(info);
 }
 
-int recvHttpRequest(int cfd, int epfd)
+//int recvHttpRequest(int cfd, int epfd)
+void* recvHttpRequest(void* arg)
 {
+    struct FdInfo* info = (struct FdInfo*)arg;
     printf("开始接收数据...\n");
     int len = 0, totle = 0;
     char tmp[1024] = { 0 };
     char buf[4096] = { 0 };
-    while((len = recv(cfd, tmp, sizeof tmp, 0)) > 0){
+    while((len = recv(info->fd, tmp, sizeof tmp, 0)) > 0){
         //printf("tmp: %s\n", tmp);
         if(totle + len < sizeof buf)
         {
@@ -146,19 +162,22 @@ int recvHttpRequest(int cfd, int epfd)
         char* pt = strstr(buf, "\r\n");
         int reqLen = pt - buf;
         buf[reqLen] = '\0';
-        parseRequestLine(buf, cfd);
+        parseRequestLine(buf, info->fd);
 
     }
     else if (len == 0)
     {
         //客户端断开了连接
-        epoll_ctl(epfd, EPOLL_CTL_DEL, cfd, NULL);
-        close(cfd);
+        epoll_ctl(info->epfd, EPOLL_CTL_DEL, info->fd, NULL);
+        close(info->fd);
     }
     else
     {
         perror("recv");
     }
+    printf("recvMsg threadIf: %ld\n", info->tid);
+    free(info);
+    return NULL;
 }
 
 int parseRequestLine(const char *line, int cfd)
