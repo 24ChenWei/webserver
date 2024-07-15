@@ -16,3 +16,5 @@ int sendHeadMsg(int cfd, int status, const char* descr, const char* type, int le
 const char* getFileType(const char* name);
 //发送目录
 int sendDir(const char* dirName, int cfd);
+int hexToDec(char c);
+void decodeMsg(char* to, char* from);

@@ -12,6 +12,7 @@
 #include <dirent.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <ctype.h>
 
 int initListenFd(unsigned short port)
 {
@@ -130,8 +131,7 @@ int recvHttpRequest(int cfd, int epfd)
     int len = 0, totle = 0;
     char tmp[1024] = { 0 };
     char buf[4096] = { 0 };
-    while((len = recv(cfd, tmp, sizeof tmp, 0)) > 0)
-    {
+    while((len = recv(cfd, tmp, sizeof tmp, 0)) > 0){
         //printf("tmp: %s\n", tmp);
         if(totle + len < sizeof buf)
         {
@@ -140,11 +140,8 @@ int recvHttpRequest(int cfd, int epfd)
         totle += len;
         
     }
-    //判断数据是否被接收完毕
-    //printf("buf: %s\n", buf);
-    //printf("len: %d\n", len);
-    if(len == -1 && errno == EAGAIN)
-    {
+    //判断数据是否被接收完毕//printf("buf: %s\n", buf);//printf("len: %d\n", len);
+    if(len == -1 && errno == EAGAIN){
         //解析请求行
         char* pt = strstr(buf, "\r\n");
         int reqLen = pt - buf;
@@ -164,13 +161,13 @@ int recvHttpRequest(int cfd, int epfd)
     }
 }
 
-
 int parseRequestLine(const char *line, int cfd)
 {
     //解析请求行    get /xxx/1.jpg http/1.1
     char method[12];
     char path[1024];
     sscanf(line, "%[^ ] %[^ ]", method, path);
+    decodeMsg(path,path);
     printf("method: %s, path: %s\n", method, path);
     if(strcasecmp(method, "get") != 0)  //不区分大小写
     {
@@ -263,16 +260,6 @@ const char* getFileType(const char *name)
 
 
 
-
-
-
-
-
-
-
-
-
-
 int sendDir(const char *dirName, int cfd)
 {
     char buf[4096] = {0};
@@ -342,15 +329,14 @@ int sendFile(const char* fileName, int cfd)
     lseek(fd, 0, SEEK_SET);
     while(offset < size)
     {
-        int ret = sendfile(cfd, fd, &offset, size);     //offset由函数自动管理，发送数据后，更新该偏移量
+        int ret = sendfile(cfd, fd, &offset, size-offset);     //offset由函数自动管理，发送数据后，更新该偏移量
         printf("ret value: %d\n", ret);
         if (ret == -1 && errno == EAGAIN)
         {
             printf("没数据...\n");
-            //usleep(10);   //sendfile设置为非阻塞模式时，如果没数据也会一直进行读，但是这时错误码是EAGAIN
+            usleep(10);   //sendfile设置为非阻塞模式时，如果没数据也会一直进行读，但是这时错误码是EAGAIN
         }
     }
-    
 #endif
     close(fd);
     return 0;
@@ -370,3 +356,45 @@ int sendHeadMsg(int cfd, int status, const char *descr, const char *type, int le
 }
 
 
+
+
+// 将字符转换为整形数
+int hexToDec(char c)
+{
+    if (c >= '0' && c <= '9')
+        return c - '0';
+    if (c >= 'a' && c <= 'f')
+        return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F')
+        return c - 'A' + 10;
+
+    return 0;
+}
+
+// 解码
+// to 存储解码之后的数据, 传出参数, from被解码的数据, 传入参数
+void decodeMsg(char* to, char* from)
+{
+    for (; *from != '\0'; ++to, ++from)
+    {
+        // isxdigit -> 判断字符是不是16进制格式, 取值在 0-f
+        // Linux%E5%86%85%E6%A0%B8.jpg
+        if (from[0] == '%' && isxdigit(from[1]) && isxdigit(from[2]))   //isxdigit判断是否为16进制
+        {
+            // 将16进制的数 -> 十进制 将这个数值赋值给了字符 int -> char
+            // B2 == 178
+            // 将3个字符, 变成了一个字符, 这个字符就是原始数据
+            *to = hexToDec(from[1]) * 16 + hexToDec(from[2]);
+
+            // 跳过 from[1] 和 from[2] 因此在当前循环中已经处理过了
+            from += 2;
+        }
+        else
+        {
+            // 字符拷贝, 赋值
+            *to = *from;
+        }
+
+    }
+    *to = '\0';
+}
