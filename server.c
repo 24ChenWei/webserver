@@ -3,6 +3,17 @@
 #include <unistd.h>
 #include <string.h>
 #include <arpa/inet.h>
+#include <pthread.h>
+
+struct SockInfo
+{
+    struct sockaddr_in addr;
+    int fd;
+};
+
+struct SockInfo infos[512];
+
+void* working(void* arg);
 
 
 int main() {
@@ -32,29 +43,54 @@ int main() {
         return -1;
     }
 
-    //4.阻塞并等待客户端的连接
-    struct sockaddr_in caddr;
-    int addrlen = sizeof(caddr);
-    int cfd = accept(fd, (struct sockaddr*) &caddr, &addrlen);
-    if(cfd == -1) {
-        perror("accept");
-        return -1;
+    int max = sizeof(infos)/sizeof(infos[0]);
+    for(int i = 0; i < max; i++){
+        bzero(&infos[i],sizeof(infos[i]));
+        infos[i].fd = -1;
     }
 
+    //4.阻塞并等待客户端的连接
+    int addrlen = sizeof(struct sockaddr_in);
+    while(1){
+        struct SockInfo* pinfo;
+        for(int i = 0; i < max; ++i){
+            if(infos[i].fd == -1){
+                pinfo = &infos[i];
+                break;
+            }
+        }
+        int cfd = accept(fd, (struct sockaddr*) &pinfo->addr, &addrlen);
+        pinfo->fd = cfd;
+        if(cfd == -1) {
+            perror("accept");
+            break;
+        }
+        //创建子线程
+        pthread_t tid;
+        pthread_create(&tid, NULL, working, pinfo);
+        pthread_detach(tid);
+    }
+    close(fd);
+    return 0;
+}
+
+void* working(void* arg)
+{
+    struct SockInfo* pinfo = (struct SockInfo*)arg;
     //连接建立成功，打印客户端的IP和端口信息,将网络字节序二进制值转换成点分十进制串
     char ip[32];
 
     printf("客户端的IP: %s     端口:  %d\n",
-    inet_ntop(AF_INET, &caddr.sin_addr.s_addr, ip, sizeof(ip)),ntohs(caddr.sin_port));
+    inet_ntop(AF_INET, &pinfo->addr.sin_addr.s_addr, ip, sizeof(ip)),ntohs(pinfo->addr.sin_port));
 
     //5.通信
     while(1) {
         //接受数据
         char buff[1024];
-        int len = recv(cfd, buff, sizeof(buff), 0);
+        int len = recv(pinfo->fd, buff, sizeof(buff), 0);
         if(len > 0) {
             printf("client say: %s\n", buff);
-            send(cfd, &buff, len, 0);
+            send(pinfo->fd, &buff, len, 0);
         }
         else if (len == 0) {
             printf("客户端已经断开连接...\n");
@@ -67,7 +103,7 @@ int main() {
     }
 
     //关闭文件描述符
-    close(fd);
-    close(cfd);
-    return 0;
+    close(pinfo->fd);
+    pinfo->fd = -1;
+    return NULL;
 }
